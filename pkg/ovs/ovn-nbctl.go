@@ -347,3 +347,44 @@ func (c Client) GetPortAddr(port string) ([]string, error) {
 	}
 	return address, nil
 }
+
+func (c Client) CreatePortGroup(pgName string) error {
+	output, err := c.ovnNbCommand("find", "--data=bare", "--no-heading", "--columns=_uuid", "port_group", fmt.Sprintf("name=%s", pgName))
+	if err != nil {
+		klog.Errorf("failed to find port_group %s", pgName)
+		return err
+	}
+	if output == "" {
+		return nil
+	}
+	_, err = c.ovnNbCommand("pg-add", pgName)
+	return err
+}
+
+func (c Client) DeletePortGroup(pgName string) error {
+	_, err := c.ovnNbCommand(IfExists, "destroy", "port_group", pgName)
+	return err
+}
+
+func (c Client) CreateAddressSet(asName string) error {
+	output, err := c.ovnNbCommand("find", "--data=bare", "--no-heading", "--columns=_uuid", "address_set", fmt.Sprintf("name=%s", asName))
+	if err != nil {
+		klog.Errorf("failed to find address_set %s", asName)
+		return err
+	}
+	if output == "" {
+		return nil
+	}
+	_, err = c.ovnNbCommand("create", "address_set", fmt.Sprintf("name=%s", asName))
+	return err
+}
+
+func (c Client) DeleteAddressSet(asName string) error {
+	_, err := c.ovnNbCommand(IfExists, "destroy", "address_set", asName)
+	return err
+}
+
+func (c Client) CreateIngressACL(pgName, asIngressName, asExceptName string) error {
+	fmt.Sprintf(`match="outport == @%s"`, pgName)
+	return nil
+}
