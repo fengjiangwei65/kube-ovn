@@ -256,6 +256,8 @@ func (c *Controller) Run(stopCh <-chan struct{}) error {
 		go wait.Until(c.runDeleteUdpServiceWorker, time.Second, stopCh)
 
 		go wait.Until(c.runUpdateEndpointWorker, time.Second, stopCh)
+
+		go wait.Until(c.runAddNpWorker, time.Second, stopCh)
 	}
 
 	klog.Info("Started workers")

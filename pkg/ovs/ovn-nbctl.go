@@ -9,6 +9,8 @@ import (
 
 	"github.com/alauda/kube-ovn/pkg/util"
 	"k8s.io/klog"
+
+	netv1 "k8s.io/api/networking/v1"
 )
 
 func (c Client) ovnNbCommand(cmdArgs ...string) (string, error) {
@@ -384,7 +386,62 @@ func (c Client) DeleteAddressSet(asName string) error {
 	return err
 }
 
-func (c Client) CreateIngressACL(pgName, asIngressName, asExceptName string) error {
-	fmt.Sprintf(`match="outport == @%s"`, pgName)
+func (c Client) CreateIngressACL(pgName, asIngressName, asExceptName string, npp []netv1.NetworkPolicyPort) error {
+	_, err := c.ovnNbCommand("--type=port-group", "acl-add", MayExist, pgName, "to-lport", util.IngressExceptDropPriority, fmt.Sprintf("ip4.src == $%s", asExceptName), "drop")
+	if err != nil {
+		return fmt.Errorf("failed to add ingress acl, %v", err)
+	}
+
+	if len(npp) == 0 {
+		_, err = c.ovnNbCommand("--type=port-group", "acl-add", MayExist, pgName, "to-lport", util.IngressAllowPriority, fmt.Sprintf("ip4.src == $%s", asIngressName), "allow-related")
+		if err != nil {
+			return fmt.Errorf("failed to add ingress acl, %v", err)
+		}
+	} else {
+		for _, port := range npp {
+			_, err = c.ovnNbCommand("--type=port-group", "acl-add", MayExist, pgName, "to-lport", util.IngressAllowPriority, fmt.Sprintf("ip4.src == $%s && %s.dst == %d", asIngressName, *port.Protocol, port.Port.IntVal), "allow-related")
+			if err != nil {
+				return fmt.Errorf("failed to add ingress acl, %v", err)
+			}
+		}
+	}
+
+	_, err = c.ovnNbCommand("--type=port-group", "acl-add", MayExist, pgName, "to-lport", util.IngressDefaultDrop, "ip", "drop")
+	if err != nil {
+		return fmt.Errorf("failed to add ingress acl, %v", err)
+	}
 	return nil
+}
+
+func (c Client) CreateEgressACL(pgName, asEgressName, asExceptName string, npp []netv1.NetworkPolicyPort) error {
+	_, err := c.ovnNbCommand("--type=port-group", "acl-add", MayExist, pgName, "from-lport", util.EgressExceptDropPriority, fmt.Sprintf("ip4.dst == $%s", asExceptName), "drop")
+	if err != nil {
+		return fmt.Errorf("failed to add egress acl, %v", err)
+	}
+
+	if len(npp) == 0 {
+		_, err = c.ovnNbCommand("--type=port-group", "acl-add", MayExist, pgName, "from-lport", util.IngressAllowPriority, fmt.Sprintf("ip4.dst == $%s", asEgressName), "allow-related")
+		if err != nil {
+			return fmt.Errorf("failed to add egress acl, %v", err)
+		}
+	} else {
+		for _, port := range npp {
+			_, err = c.ovnNbCommand("--type=port-group", "acl-add", MayExist, pgName, "from-lport", util.EgressAllowPriority, fmt.Sprintf("ip4.dst == $%s && %s.dst == %s", asEgressName, *port.Protocol, port.Port.StrVal), "allow-related")
+			if err != nil {
+				return fmt.Errorf("failed to add egress acl, %v", err)
+			}
+		}
+	}
+
+	_, err = c.ovnNbCommand("--type=port-group", "acl-add", MayExist, pgName, "from-lport", util.EgressDefaultDrop, "ip", "drop")
+	if err != nil {
+		return fmt.Errorf("failed to add egress acl, %v", err)
+	}
+
+	return nil
+}
+
+func (c Client) DeleteACL(pgName string) error {
+	_, err := c.ovnNbCommand("--type=port-group", "acl-del", pgName)
+	return err
 }
