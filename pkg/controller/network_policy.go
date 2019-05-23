@@ -2,6 +2,7 @@ package controller
 
 import (
 	"fmt"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/api/networking/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -108,6 +109,12 @@ func (c *Controller) handleAddNp(key string) error {
 		return err
 	}
 
+	defer func() {
+		if err != nil {
+			c.recorder.Eventf(np, corev1.EventTypeWarning, "CreateACLFailed", err.Error())
+		}
+	}()
+
 	ingressPorts := []netv1.NetworkPolicyPort{}
 	egressPorts := []netv1.NetworkPolicyPort{}
 	for _, npr := range np.Spec.Ingress {
@@ -128,34 +135,39 @@ func (c *Controller) handleAddNp(key string) error {
 		return err
 	}
 
-	if err := c.ovnClient.CreateAddressSet(ingressAllowAsName); err != nil {
-		klog.Errorf("failed to create address_set %s, %v", ingressAllowAsName, err)
-		return err
+	if len(np.Spec.Ingress) > 0 {
+		if err := c.ovnClient.CreateAddressSet(ingressAllowAsName); err != nil {
+			klog.Errorf("failed to create address_set %s, %v", ingressAllowAsName, err)
+			return err
+		}
+
+		if err := c.ovnClient.CreateAddressSet(ingressExceptAsName); err != nil {
+			klog.Errorf("failed to create address_set %s, %v", ingressExceptAsName, err)
+			return err
+		}
+
+		if err := c.ovnClient.CreateIngressACL(pgName, ingressAllowAsName, ingressExceptAsName, ingressPorts); err != nil {
+			klog.Errorf("failed to create ingress acls for np %s, %v", key, err)
+			return err
+		}
 	}
 
-	if err := c.ovnClient.CreateAddressSet(ingressExceptAsName); err != nil {
-		klog.Errorf("failed to create address_set %s, %v", ingressExceptAsName, err)
-		return err
+	if len(np.Spec.Egress) > 0 {
+		if err := c.ovnClient.CreateAddressSet(egressAllowAsName); err != nil {
+			klog.Errorf("failed to create address_set %s, %v", egressAllowAsName, err)
+			return err
+		}
+
+		if err := c.ovnClient.CreateAddressSet(egressExceptAsName); err != nil {
+			klog.Errorf("failed to create address_set %s, %v", egressExceptAsName, err)
+			return err
+		}
+
+		if err := c.ovnClient.CreateEgressACL(pgName, egressAllowAsName, egressExceptAsName, egressPorts); err != nil {
+			klog.Errorf("failed to create egress acls for np %s, %v", key, err)
+			return err
+		}
 	}
 
-	if err := c.ovnClient.CreateAddressSet(egressAllowAsName); err != nil {
-		klog.Errorf("failed to create address_set %s, %v", egressAllowAsName, err)
-		return err
-	}
-
-	if err := c.ovnClient.CreateAddressSet(egressExceptAsName); err != nil {
-		klog.Errorf("failed to create address_set %s, %v", egressExceptAsName, err)
-		return err
-	}
-
-	if err := c.ovnClient.CreateIngressACL(pgName, ingressAllowAsName, ingressExceptAsName, ingressPorts); err != nil {
-		klog.Errorf("failed to create ingress acls for np %s, %v", key, err)
-		return err
-	}
-
-	if err := c.ovnClient.CreateEgressACL(pgName, egressAllowAsName, egressExceptAsName, egressPorts); err != nil {
-		klog.Errorf("failed to create egress acls for np %s, %v", key, err)
-		return err
-	}
 	return nil
 }
