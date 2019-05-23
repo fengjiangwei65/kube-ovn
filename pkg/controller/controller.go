@@ -68,7 +68,6 @@ type Controller struct {
 	npsLister     netv1.NetworkPolicyLister
 	npsSynced     cache.InformerSynced
 	addNpQueue    workqueue.RateLimitingInterface
-	updateNpQueue workqueue.RateLimitingInterface
 	deleteNpQueue workqueue.RateLimitingInterface
 	// recorder is an event recorder for recording Event resources to the
 	// Kubernetes API.
@@ -136,7 +135,6 @@ func NewController(config *Configuration) *Controller {
 		npsLister:     npInformer.Lister(),
 		npsSynced:     npInformer.Informer().HasSynced,
 		addNpQueue:    workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "AddNp"),
-		updateNpQueue: workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "UpdateNp"),
 		deleteNpQueue: workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "DeleteNp"),
 
 		recorder: recorder,
@@ -205,7 +203,6 @@ func (c *Controller) Run(stopCh <-chan struct{}) error {
 	defer c.updateEndpointQueue.ShutDown()
 
 	defer c.addNpQueue.ShutDown()
-	defer c.updateNpQueue.ShutDown()
 	defer c.deleteNpQueue.ShutDown()
 
 	// Start the informer factories to begin populating the informer caches
@@ -258,6 +255,7 @@ func (c *Controller) Run(stopCh <-chan struct{}) error {
 		go wait.Until(c.runUpdateEndpointWorker, time.Second, stopCh)
 
 		go wait.Until(c.runAddNpWorker, time.Second, stopCh)
+		go wait.Until(c.runDeleteNpWorker, time.Second, stopCh)
 	}
 
 	klog.Info("Started workers")

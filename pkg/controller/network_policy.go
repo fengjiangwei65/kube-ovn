@@ -55,12 +55,17 @@ func (c *Controller) enqueueUpdateNp(old, new interface{}) {
 			return
 		}
 		klog.V(3).Infof("enqueue update np %s", key)
-		c.updateNpQueue.AddRateLimited(key)
+		c.addNpQueue.AddRateLimited(key)
 	}
 }
 
 func (c *Controller) runAddNpWorker() {
 	for c.processNextAddNpWorkItem() {
+	}
+}
+
+func (c *Controller) runDeleteNpWorker() {
+	for c.processNextDeleteNpWorkItem() {
 	}
 }
 
@@ -85,6 +90,37 @@ func (c *Controller) processNextAddNpWorkItem() bool {
 			return fmt.Errorf("error syncing '%s': %s, requeuing", key, err.Error())
 		}
 		c.addNpQueue.Forget(obj)
+		return nil
+	}(obj)
+
+	if err != nil {
+		utilruntime.HandleError(err)
+		return true
+	}
+	return true
+}
+
+func (c *Controller) processNextDeleteNpWorkItem() bool {
+	obj, shutdown := c.deleteNpQueue.Get()
+
+	if shutdown {
+		return false
+	}
+
+	err := func(obj interface{}) error {
+		defer c.deleteNpQueue.Done(obj)
+		var key string
+		var ok bool
+		if key, ok = obj.(string); !ok {
+			c.deleteNpQueue.Forget(obj)
+			utilruntime.HandleError(fmt.Errorf("expected string in workqueue but got %#v", obj))
+			return nil
+		}
+		if err := c.handleDeleteNp(key); err != nil {
+			c.deleteNpQueue.AddRateLimited(key)
+			return fmt.Errorf("error syncing '%s': %s, requeuing", key, err.Error())
+		}
+		c.deleteNpQueue.Forget(obj)
 		return nil
 	}(obj)
 
@@ -150,6 +186,21 @@ func (c *Controller) handleAddNp(key string) error {
 			klog.Errorf("failed to create ingress acls for np %s, %v", key, err)
 			return err
 		}
+	} else {
+		if err := c.ovnClient.DeleteACL(pgName, "to-lport"); err != nil {
+			klog.Errorf("failed to delete np %s ingress acls, %v", key, err)
+			return err
+		}
+
+		if err := c.ovnClient.DeleteAddressSet(ingressAllowAsName); err != nil {
+			klog.Errorf("failed to delete np %s ingress allow address set, %v", key, err)
+			return err
+		}
+
+		if err := c.ovnClient.DeleteAddressSet(ingressExceptAsName); err != nil {
+			klog.Errorf("failed to delete np %s ingress except address set, %v", key, err)
+			return err
+		}
 	}
 
 	if len(np.Spec.Egress) > 0 {
@@ -167,6 +218,70 @@ func (c *Controller) handleAddNp(key string) error {
 			klog.Errorf("failed to create egress acls for np %s, %v", key, err)
 			return err
 		}
+	} else {
+		if err := c.ovnClient.DeleteACL(pgName, "from-lport"); err != nil {
+			klog.Errorf("failed to delete np %s egress acls, %v", key, err)
+			return err
+		}
+
+		if err := c.ovnClient.DeleteAddressSet(egressAllowAsName); err != nil {
+			klog.Errorf("failed to delete np %s egress allow address set, %v", key, err)
+			return err
+		}
+
+		if err := c.ovnClient.DeleteAddressSet(egressExceptAsName); err != nil {
+			klog.Errorf("failed to delete np %s egress except address set, %v", key, err)
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *Controller) handleDeleteNp(key string) error {
+	namespace, name, err := cache.SplitMetaNamespaceKey(key)
+	if err != nil {
+		utilruntime.HandleError(fmt.Errorf("invalid resource key: %s", key))
+		return nil
+	}
+
+	pgName := fmt.Sprintf("%s.%s", name, namespace)
+	ingressAllowAsName := fmt.Sprintf("%s.%s.ingress.allow", name, namespace)
+	ingressExceptAsName := fmt.Sprintf("%s.%s.ingress.except", name, namespace)
+	egressAllowAsName := fmt.Sprintf("%s.%s.egress.allow", name, namespace)
+	egressExceptAsName := fmt.Sprintf("%s.%s.egress.except", name, namespace)
+
+	if err := c.ovnClient.DeleteACL(pgName, "to-lport"); err != nil {
+		klog.Errorf("failed to delete np %s ingress acls, %v", key, err)
+		return err
+	}
+
+	if err := c.ovnClient.DeleteACL(pgName, "from-lport"); err != nil {
+		klog.Errorf("failed to delete np %s egress acls, %v", key, err)
+		return err
+	}
+
+	if err := c.ovnClient.DeleteAddressSet(ingressAllowAsName); err != nil {
+		klog.Errorf("failed to delete np %s ingress allow address set, %v", key, err)
+		return err
+	}
+
+	if err := c.ovnClient.DeleteAddressSet(ingressExceptAsName); err != nil {
+		klog.Errorf("failed to delete np %s ingress except address set, %v", key, err)
+		return err
+	}
+
+	if err := c.ovnClient.DeleteAddressSet(egressAllowAsName); err != nil {
+		klog.Errorf("failed to delete np %s egress allow address set, %v", key, err)
+		return err
+	}
+
+	if err := c.ovnClient.DeleteAddressSet(egressExceptAsName); err != nil {
+		klog.Errorf("failed to delete np %s egress except address set, %v", key, err)
+		return err
+	}
+
+	if err := c.ovnClient.DeletePortGroup(pgName); err != nil {
+		klog.Errorf("failed to delete np %s port group, %v", key, err)
 	}
 
 	return nil
